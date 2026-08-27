@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Image viewer demo</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; background: #0b0b0d; color: #fafafa;
+             font-family: ui-sans-serif, system-ui, sans-serif; }
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
+      h1 { font-size: 26px; margin: 0 0 6px; }
+      p.lede { color: #a1a1aa; margin: 0 0 28px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+      .tile { border: 0; padding: 0; background: none; cursor: pointer; border-radius: 8px; overflow: hidden; }
+      .tile img { width: 100%; aspect-ratio: 3/2; object-fit: cover; display: block; }
+      .tile:hover img { opacity: .85; }
+      .row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; }
+      .row button { background: #27272a; color: #fafafa; border: 1px solid #3f3f46;
+                    padding: 8px 14px; border-radius: 8px; cursor: pointer; font: inherit; }
+      .row button:hover { background: #3f3f46; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
