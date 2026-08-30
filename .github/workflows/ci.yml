@@ -44,6 +44,21 @@ jobs:
       # than the check being dropped.
       - run: npx --yes @arethetypeswrong/cli@latest --pack --exclude-entrypoints styles.css
 
+  a11y:
+    name: Accessibility
+    runs-on: ubuntu-latest
+    # axe-core runs inside the test suite, but it gets its own job so a
+    # violation reads as an accessibility failure in the checks list rather
+    # than as one more red test among seventy.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run test/viewer.test.tsx -t accessibility
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}

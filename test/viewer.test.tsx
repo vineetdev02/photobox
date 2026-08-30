@@ -262,3 +262,68 @@ describe("switching group restarts the set", () => {
     expect(onIndexChange).toHaveBeenCalledWith(0, expect.objectContaining({ index: 0, total: 1 }));
   });
 });
+
+describe("accessibility", () => {
+  /*
+   * The rules turned off are environmental, not excuses. jsdom computes no
+   * colours at all, so contrast cannot be judged here — it is a design review
+   * question. `region` wants every node inside a landmark, which is a page
+   * concern: an overlay portalled to <body> is not the host page's structure.
+   */
+  const rules = { "color-contrast": { enabled: false }, region: { enabled: false } };
+
+  it("has no axe violations with the full chrome on", async () => {
+    const axe = (await import("axe-core")).default;
+    render(<ImageViewer images={images} />);
+
+    const results = await axe.run(document.body, { rules });
+    expect(results.violations.map((violation) => violation.id)).toEqual([]);
+  });
+
+  it("has no axe violations with every switch off", async () => {
+    // The bare overlay is the configuration a consumer reaches for when they
+    // want their own chrome, and it must not lose the dialog semantics.
+    const axe = (await import("axe-core")).default;
+    render(
+      <ImageViewer
+        images={images}
+        groups={false}
+        thumbnails={false}
+        toolbar={false}
+        arrows={false}
+        caption={false}
+      />,
+    );
+
+    const results = await axe.run(document.body, { rules });
+    expect(results.violations.map((violation) => violation.id)).toEqual([]);
+  });
+
+  it("is a labelled modal dialog", () => {
+    render(<ImageViewer images={images} />);
+    const dialog = screen.getByRole("dialog");
+
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    expect(dialog.getAttribute("aria-label")).toBeTruthy();
+  });
+
+  it("takes focus on open and hands it back on close", () => {
+    // The restore is the half people forget: without it, dismissing the
+    // viewer drops the caret at the top of the document and a keyboard user
+    // loses their place on the page. The wrapping half of the trap cannot be
+    // tested here — it filters on offsetParent, which jsdom always reports as
+    // null, so every element reads as invisible.
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    const { unmount } = render(<ImageViewer images={images} />);
+    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+
+    unmount();
+    expect(document.activeElement).toBe(opener);
+
+    opener.remove();
+  });
+});

@@ -257,9 +257,17 @@ export function ImageViewer(props: ImageViewerProps) {
 
   /* ---------- side effects ---------- */
 
+  /** Whether there is actually an overlay in the document to act on. */
+  const showing = open && mounted && images.length > 0 && Boolean(current) && Boolean(context);
+
   useStyles(injectStyles);
   useScrollLock(scrollLock && open);
-  useFocusTrap(rootRef, open);
+  // `showing`, not `open`: the mount guard below makes the first render return
+  // null, so on the pass where the trap's effect first runs there is no node
+  // for rootRef to point at — and its deps do not change when the portal
+  // arrives, so it would never run again. The overlay would then never take
+  // focus, and a keyboard user would still be on the page behind it.
+  useFocusTrap(rootRef, showing);
   usePreload(visible, index, open ? preload : 0);
 
   const openedRef = useRef(false);
@@ -324,7 +332,9 @@ export function ImageViewer(props: ImageViewerProps) {
 
   /* ---------- render ---------- */
 
-  if (!open || !mounted || images.length === 0 || !current || !context) return null;
+  // `current` and `context` are retested because a boolean does not narrow
+  // them for TypeScript, not because `showing` could be wrong about them.
+  if (!showing || !current || !context) return null;
 
   const atStart = !loop && index === 0;
   const atEnd = !loop && index === visible.length - 1;
