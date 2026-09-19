@@ -34,6 +34,24 @@ export function formatTemplate(
     .trim();
 }
 
+const TYPING_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+
+/**
+ * True when a keystroke belongs to a field, so the viewer's shortcuts can
+ * stand aside.
+ *
+ * Every shortcut but Escape is a single character or an arrow, which is also
+ * what someone types into a search box in `headerExtra` or a caption field in
+ * `footerExtra`. Listening on `window` means those keys arrive here first, and
+ * `preventDefault` then eats them: `r` rotates instead of typing, and an arrow
+ * key moves the gallery rather than the caret.
+ */
+export function isTypingTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  if (typeof element?.closest !== "function") return false;
+  return element.closest(TYPING_SELECTOR) !== null;
+}
+
 /** Triggers a download without navigating away, falling back to a new tab. */
 export function downloadFile(url: string, filename?: string): void {
   try {

@@ -106,7 +106,9 @@ The buttons in the top right are yours. Brochure, request more photos, contact �
 
 Give an image a `group` and the tab bar builds itself, with counts, in first-seen order.
 Switching tabs filters the set and restarts the count — image 6 of Indoors is not image 6 of
-Outdoors. One group means no tab bar at all.
+Outdoors. One group means no tab bar at all. Replace `images` while the viewer is open and a
+selected group the new set does not contain falls back to the first one it does, rather than
+filtering every image away.
 
 ```tsx
 <ImageViewer images={images} groups allGroupsTab defaultGroup="Indoors" />
@@ -127,6 +129,9 @@ Outdoors. One group means no tab bar at all.
 
 Turn them off with `gestures={false}`, `keyboard={false}`, `wheelZoom={false}`,
 `doubleClickZoom={false}`.
+
+Every shortcut but `Esc` stands aside while an input, textarea, select or contenteditable has
+focus, so a field in `headerExtra` or `footerExtra` gets its own keystrokes — `R` types an R.
 
 ## Props
 

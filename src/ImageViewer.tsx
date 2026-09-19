@@ -33,7 +33,15 @@ import { useScrollLock } from "./hooks/useScrollLock.js";
 import { useStyles } from "./hooks/useStyles.js";
 import { useZoomPan } from "./hooks/useZoomPan.js";
 import type { FeedbackValue, ImageViewerProps, ViewerContext, ViewerImage } from "./types.js";
-import { absoluteUrl, countInGroup, deriveGroups, downloadFile, formatTemplate, shareUrl } from "./utils.js";
+import {
+  absoluteUrl,
+  countInGroup,
+  deriveGroups,
+  downloadFile,
+  formatTemplate,
+  isTypingTarget,
+  shareUrl,
+} from "./utils.js";
 
 export function ImageViewer(props: ImageViewerProps) {
   const {
@@ -104,11 +112,26 @@ export function ImageViewer(props: ImageViewerProps) {
   const groupNames = useMemo(() => deriveGroups(images), [images]);
   const showGroups = groupsEnabled && groupNames.length > 1;
 
-  const [activeGroup, setActiveGroup] = useState<string | undefined>(() => {
+  const [selectedGroup, setSelectedGroup] = useState<string | undefined>(() => {
     if (!groupsEnabled || groupNames.length < 2) return undefined;
     if (defaultGroup && groupNames.includes(defaultGroup)) return defaultGroup;
     return allGroupsTab ? undefined : groupNames[0];
   });
+
+  /**
+   * The selection, repaired against the images actually in hand.
+   *
+   * `images` is an ordinary prop, so it can be replaced while the viewer is
+   * open — a second property, a filtered gallery, a set that finished loading.
+   * A selection left pointing at a group the new array does not contain
+   * filters every image away, and an empty set renders as no overlay at all:
+   * the viewer does not go blank, it disappears. Falling back here rather than
+   * in an effect means there is never a frame without an image in it.
+   */
+  const activeGroup = useMemo(() => {
+    if (selectedGroup === undefined || groupNames.includes(selectedGroup)) return selectedGroup;
+    return allGroupsTab || groupNames.length < 2 ? undefined : groupNames[0];
+  }, [selectedGroup, groupNames, allGroupsTab]);
 
   const visible = useMemo(
     () => (activeGroup === undefined ? images : images.filter((image) => image.group === activeGroup)),
@@ -144,6 +167,12 @@ export function ImageViewer(props: ImageViewerProps) {
   const contextRef = useRef(context);
   contextRef.current = context;
 
+  // Read through a ref rather than closed over: `props` is a fresh object on
+  // every render, so depending on it made `goTo` — and everything keyed on it
+  // — a new function each time, for a callback that is almost always the same.
+  const onIndexChangeRef = useRef(props.onIndexChange);
+  onIndexChangeRef.current = props.onIndexChange;
+
   const goTo = useCallback(
     (next: number) => {
       if (visible.length === 0) return;
@@ -154,7 +183,7 @@ export function ImageViewer(props: ImageViewerProps) {
       if (!isControlled) setInternalIndex(wrapped);
       const image = visible[wrapped];
       if (image) {
-        props.onIndexChange?.(wrapped, {
+        onIndexChangeRef.current?.(wrapped, {
           image,
           index: wrapped,
           total: visible.length,
@@ -163,7 +192,7 @@ export function ImageViewer(props: ImageViewerProps) {
         });
       }
     },
-    [visible, loop, isControlled, images, props],
+    [visible, loop, isControlled, images],
   );
 
   const next = useCallback(() => goTo(index + 1), [goTo, index]);
@@ -171,7 +200,7 @@ export function ImageViewer(props: ImageViewerProps) {
 
   const selectGroup = useCallback(
     (group: string | undefined) => {
-      setActiveGroup(group);
+      setSelectedGroup(group);
       onGroupChange?.(group);
 
       // A new set means the old position is meaningless — image 6 of Indoors
@@ -186,7 +215,7 @@ export function ImageViewer(props: ImageViewerProps) {
       const nextSet = group === undefined ? images : images.filter((image) => image.group === group);
       const first = nextSet[0];
       if (!first) return;
-      props.onIndexChange?.(0, {
+      onIndexChangeRef.current?.(0, {
         image: first,
         index: 0,
         total: nextSet.length,
@@ -194,7 +223,7 @@ export function ImageViewer(props: ImageViewerProps) {
         group: first.group,
       });
     },
-    [isControlled, onGroupChange, images, props],
+    [isControlled, onGroupChange, images],
   );
 
   /* ---------- refs and transform ---------- */
@@ -243,11 +272,25 @@ export function ImageViewer(props: ImageViewerProps) {
   /* ---------- slideshow ---------- */
 
   const [playing, setPlaying] = useState(false);
+
+  // The tick reads `next` out of a ref instead of closing over it, so the
+  // effect can depend on plain values only. `goTo` used to be in here, and it
+  // was a different function on every render, so *any* render restarted the
+  // timer: a consumer whose page re-renders more often than
+  // `slideshowInterval` — a hover state, a resize listener, a parent ticking a
+  // clock — had a slideshow that sat on image one and never moved.
+  //
+  // `index` stays a dependency on purpose. It is the one restart that is
+  // wanted: stepping through with the arrows gives you the full interval to
+  // look at the image you just chose.
+  const advanceRef = useRef(next);
+  advanceRef.current = next;
+
   useEffect(() => {
     if (!playing || !open || visible.length < 2) return;
-    const timer = window.setInterval(() => goTo(index + 1), slideshowInterval);
+    const timer = window.setInterval(() => advanceRef.current(), slideshowInterval);
     return () => window.clearInterval(timer);
-  }, [playing, open, visible.length, index, goTo, slideshowInterval]);
+  }, [playing, open, visible.length, index, slideshowInterval]);
 
   // Zooming in is a deliberate look at one photo; advancing out from under the
   // user at that moment is the wrong call, so the slideshow yields.
@@ -303,6 +346,11 @@ export function ImageViewer(props: ImageViewerProps) {
     if (!keyboard || !open || typeof window === "undefined") return;
 
     function onKeyDown(event: KeyboardEvent) {
+      // The listener is on `window`, so a keystroke aimed at a field inside
+      // the viewer arrives here first. Escape is the exception: closing is
+      // what a dialog is expected to answer to, whatever has focus.
+      if (event.key !== "Escape" && isTypingTarget(event.target)) return;
+
       switch (event.key) {
         case "ArrowRight": event.preventDefault(); next(); break;
         case "ArrowLeft": event.preventDefault(); previous(); break;

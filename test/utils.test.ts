@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { countInGroup, deriveGroups, formatTemplate } from "../src/utils.js";
+import { countInGroup, deriveGroups, formatTemplate, isTypingTarget } from "../src/utils.js";
 import type { ViewerImage } from "../src/types.js";
 
 const images: ViewerImage[] = [
@@ -48,5 +48,33 @@ describe("formatTemplate", () => {
 
   it("treats zero as a value rather than as missing", () => {
     expect(formatTemplate("{index}/{total}", { index: 0, total: 3 })).toBe("0/3");
+  });
+});
+
+describe("isTypingTarget", () => {
+  const make = (html: string): HTMLElement => {
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    document.body.appendChild(host);
+    return host.firstElementChild as HTMLElement;
+  };
+
+  it("recognises the fields a keystroke belongs to", () => {
+    expect(isTypingTarget(make("<input />"))).toBe(true);
+    expect(isTypingTarget(make("<textarea></textarea>"))).toBe(true);
+    expect(isTypingTarget(make("<select></select>"))).toBe(true);
+    expect(isTypingTarget(make('<div contenteditable="true"></div>'))).toBe(true);
+  });
+
+  it("looks through a wrapper inside a contenteditable region", () => {
+    const editable = make('<div contenteditable="true"><span>text</span></div>');
+    expect(isTypingTarget(editable.querySelector("span"))).toBe(true);
+  });
+
+  it("leaves everything else to the shortcuts", () => {
+    expect(isTypingTarget(make("<button></button>"))).toBe(false);
+    expect(isTypingTarget(make('<div contenteditable="false"></div>'))).toBe(false);
+    expect(isTypingTarget(null)).toBe(false);
+    expect(isTypingTarget(new EventTarget())).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ImageViewer } from "../src/ImageViewer.js";
@@ -250,6 +251,29 @@ describe("feedback dismisses itself", () => {
       vi.useRealTimers();
     }
   });
+
+  it("still gives a full interval after the arrows move the image", () => {
+    vi.useFakeTimers();
+
+    try {
+      render(<ImageViewer images={images} groups={false} slideshow slideshowInterval={3000} />);
+      fireEvent.click(screen.getByTitle("Start slideshow"));
+
+      act(() => { vi.advanceTimersByTime(2500); });
+      fireEvent.click(screen.getByLabelText("Next image"));
+      expect(currentSrc()).toBe("/out-2.jpg");
+
+      // The clock restarts on a deliberate move, so the picture just chosen is
+      // not whipped away 500ms later.
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(currentSrc()).toBe("/out-2.jpg");
+
+      act(() => { vi.advanceTimersByTime(2500); });
+      expect(currentSrc()).toBe("/in-1.jpg");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("switching group restarts the set", () => {
@@ -325,5 +349,126 @@ describe("accessibility", () => {
     expect(document.activeElement).toBe(opener);
 
     opener.remove();
+  });
+});
+
+const currentSrc = (): string | undefined =>
+  document.querySelector<HTMLImageElement>(".riv-img")?.getAttribute("src") ?? undefined;
+
+/**
+ * The shortcuts listen on `window`, so a keystroke meant for a field a
+ * consumer put in `headerExtra` or `footerExtra` reaches them first — and
+ * every one of them but Escape is a plain character or an arrow.
+ */
+describe("keyboard shortcuts stand aside for a field", () => {
+  it("leaves an arrow key to the caret instead of changing image", () => {
+    render(<ImageViewer images={images} headerExtra={<input data-testid="q" />} />);
+    const field = screen.getByTestId("q");
+    field.focus();
+
+    fireEvent.keyDown(field, { key: "ArrowRight" });
+
+    expect(currentSrc()).toBe("/out-1.jpg");
+  });
+
+  it("does not consume the characters the tools are bound to", () => {
+    render(<ImageViewer images={images} headerExtra={<input data-testid="q" />} />);
+    const field = screen.getByTestId("q");
+
+    for (const key of ["r", "f", "0", "+", "-"]) {
+      expect(fireEvent.keyDown(field, { key })).toBe(true);
+    }
+  });
+
+  it("still closes on Escape, which is what a dialog answers to", () => {
+    const onClose = vi.fn();
+    render(<ImageViewer images={images} headerExtra={<input data-testid="q" />} onClose={onClose} />);
+
+    fireEvent.keyDown(screen.getByTestId("q"), { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("still moves on an arrow key pressed anywhere else", () => {
+    render(<ImageViewer images={images} headerExtra={<input />} />);
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    expect(currentSrc()).toBe("/out-2.jpg");
+  });
+});
+
+describe("the slideshow keeps its own clock", () => {
+  it("advances even when the consumer re-renders in between", () => {
+    vi.useFakeTimers();
+
+    function Host() {
+      const [, force] = useState(0);
+      return (
+        <>
+          <button data-testid="rerender" onClick={() => force((tick) => tick + 1)}>
+            rerender
+          </button>
+          <ImageViewer images={images} groups={false} slideshow slideshowInterval={3000} />
+        </>
+      );
+    }
+
+    try {
+      render(<Host />);
+      fireEvent.click(screen.getByTitle("Start slideshow"));
+
+      // A page that re-renders faster than the interval used to restart the
+      // timer before it could ever fire, and the slideshow sat on image one.
+      act(() => { vi.advanceTimersByTime(2000); });
+      fireEvent.click(screen.getByTestId("rerender"));
+      act(() => { vi.advanceTimersByTime(1500); });
+
+      expect(currentSrc()).toBe("/out-2.jpg");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("the images prop can change while the viewer is open", () => {
+  it("falls back to a group that exists rather than disappearing", () => {
+    const replacement: ViewerImage[] = [
+      { src: "/attic-1.jpg", group: "Attic" },
+      { src: "/base-1.jpg", group: "Basement" },
+    ];
+
+    const { rerender } = render(<ImageViewer images={images} />);
+    fireEvent.click(screen.getByRole("tab", { name: /Indoors/ }));
+    expect(currentSrc()).toBe("/in-1.jpg");
+
+    rerender(<ImageViewer images={replacement} />);
+
+    expect(document.querySelector(".riv-root")).not.toBeNull();
+    expect(currentSrc()).toBe("/attic-1.jpg");
+  });
+
+  it("shows the whole set again when the new images have no groups", () => {
+    const { rerender } = render(<ImageViewer images={images} />);
+    fireEvent.click(screen.getByRole("tab", { name: /Indoors/ }));
+
+    rerender(<ImageViewer images={[{ src: "/plain-1.jpg" }, { src: "/plain-2.jpg" }]} />);
+
+    expect(currentSrc()).toBe("/plain-1.jpg");
+    expect(document.querySelector(".riv-caption")?.textContent).toContain("image 1 of 2");
+  });
+
+  it("keeps the selection when the group survives the change", () => {
+    const { rerender } = render(<ImageViewer images={images} />);
+    fireEvent.click(screen.getByRole("tab", { name: /Indoors/ }));
+
+    rerender(
+      <ImageViewer
+        images={[...images, { src: "/in-2.jpg", title: "Bath", group: "Indoors" }]}
+      />,
+    );
+
+    expect(currentSrc()).toBe("/in-1.jpg");
+    expect(document.querySelector(".riv-caption")?.textContent).toContain("Indoors image 1 of 2");
   });
 });
