@@ -1,6 +1,6 @@
 {
   "name": "photobox",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A production-grade image viewer for React: groups, zoom, pan, rotate, fullscreen, thumbnails and custom actions. Every part is a prop you can switch off.",
   "type": "module",
   "sideEffects": [
