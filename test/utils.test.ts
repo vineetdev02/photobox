@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { countInGroup, deriveGroups, formatTemplate, isTypingTarget } from "../src/utils.js";
+import {
+  ALL_GROUPS,
+  clampIndex,
+  countInGroup,
+  deriveGroups,
+  formatTemplate,
+  isTypingTarget,
+  resolveGroup,
+} from "../src/utils.js";
 import type { ViewerImage } from "../src/types.js";
 
 const images: ViewerImage[] = [
@@ -76,5 +84,64 @@ describe("isTypingTarget", () => {
     expect(isTypingTarget(make('<div contenteditable="false"></div>'))).toBe(false);
     expect(isTypingTarget(null)).toBe(false);
     expect(isTypingTarget(new EventTarget())).toBe(false);
+  });
+});
+
+describe("resolveGroup", () => {
+  const groups = ["Outdoors", "Indoors"];
+  const base = { groups, enabled: true, allTab: false, choice: null } as const;
+
+  it("starts on defaultGroup, then on the first tab, when nothing was chosen", () => {
+    expect(resolveGroup({ ...base, defaultGroup: "Indoors" })).toBe("Indoors");
+    expect(resolveGroup(base)).toBe("Outdoors");
+    expect(resolveGroup({ ...base, allTab: true })).toBeUndefined();
+  });
+
+  it("keeps a choice the images still contain", () => {
+    expect(resolveGroup({ ...base, choice: "Indoors", defaultGroup: "Outdoors" })).toBe("Indoors");
+    expect(resolveGroup({ ...base, allTab: true, choice: ALL_GROUPS })).toBeUndefined();
+  });
+
+  it("falls back the same way when the chosen group is gone", () => {
+    expect(resolveGroup({ ...base, choice: "Attic" })).toBe("Outdoors");
+    expect(resolveGroup({ ...base, choice: "Attic", defaultGroup: "Indoors" })).toBe("Indoors");
+  });
+
+  it("does not keep the All tab once there is no All tab", () => {
+    expect(resolveGroup({ ...base, choice: ALL_GROUPS })).toBe("Outdoors");
+  });
+
+  it("filters nothing when there is no tab bar to choose with", () => {
+    expect(resolveGroup({ ...base, enabled: false, choice: "Indoors" })).toBeUndefined();
+    expect(resolveGroup({ ...base, groups: ["Indoors"], choice: "Indoors" })).toBeUndefined();
+  });
+
+  it("moves to the group of an image asked for by position", () => {
+    expect(resolveGroup({ ...base, choice: "Outdoors", requested: { src: "k", group: "Indoors" } })).toBe("Indoors");
+    expect(resolveGroup({ ...base, choice: "Indoors", requested: { src: "k", group: "Indoors" } })).toBe("Indoors");
+  });
+
+  it("stays on the All tab, which already shows every image", () => {
+    expect(
+      resolveGroup({ ...base, allTab: true, choice: ALL_GROUPS, requested: { src: "k", group: "Indoors" } }),
+    ).toBeUndefined();
+  });
+
+  it("shows everything for an image that belongs to no tab", () => {
+    expect(resolveGroup({ ...base, requested: { src: "plan" } })).toBeUndefined();
+  });
+});
+
+describe("clampIndex", () => {
+  it("keeps a position inside the set", () => {
+    expect(clampIndex(2, 4)).toBe(2);
+    expect(clampIndex(9, 4)).toBe(3);
+    expect(clampIndex(-1, 4)).toBe(0);
+  });
+
+  it("never returns something that is not a usable index", () => {
+    expect(clampIndex(Number.NaN, 4)).toBe(0);
+    expect(clampIndex(1.7, 4)).toBe(1);
+    expect(clampIndex(3, 0)).toBe(0);
   });
 });

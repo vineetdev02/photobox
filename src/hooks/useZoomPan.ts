@@ -58,7 +58,11 @@ export function useZoomPan(options: Options) {
   const [animate, setAnimate] = useState(true);
 
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const start = useRef({ x: 0, y: 0, time: 0, distance: 0, scale: 1, offsetX: 0, offsetY: 0 });
+  // `multi` marks a gesture that has had two fingers down at any point. A
+  // swipe is one finger's flick; measured across a pinch it compared one
+  // finger's start with the other's end, and two fingers lifted 200px apart
+  // read as a 200px flick and changed the image.
+  const start = useRef({ x: 0, y: 0, time: 0, distance: 0, scale: 1, offsetX: 0, offsetY: 0, multi: false });
   const latest = useRef(state);
   latest.current = state;
 
@@ -131,8 +135,18 @@ export function useZoomPan(options: Options) {
 
   /* ---------- wheel ---------- */
 
+  // The stage is held as state and re-read after every commit, rather than
+  // read once by the listener's effect. photobox gates its overlay on a mount
+  // flag, so an effect keyed on [stageRef, …] ran while the ref was still
+  // null and then never again — nothing in those deps changes when the node
+  // arrives — and wheel zoom was never attached at all. Tracking the element
+  // also means any later swap of the stage node is followed, not missed.
+  const [stage, setStage] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    const stage = stageRef.current;
+    if (stageRef.current !== stage) setStage(stageRef.current);
+  });
+
+  useEffect(() => {
     if (!stage || !zoom || !options.wheelZoom) return;
 
     const onWheel = (event: WheelEvent) => {
@@ -150,7 +164,7 @@ export function useZoomPan(options: Options) {
     // overlay before preventDefault could stop it.
     stage.addEventListener("wheel", onWheel, { passive: false });
     return () => stage.removeEventListener("wheel", onWheel);
-  }, [stageRef, zoom, options.wheelZoom, applyScale, zoomStep]);
+  }, [stage, zoom, options.wheelZoom, applyScale, zoomStep]);
 
   /* ---------- pointers ---------- */
 
@@ -164,12 +178,13 @@ export function useZoomPan(options: Options) {
       const points = [...pointers.current.values()];
       const current = latest.current;
 
-      if (points.length === 2) {
+      if (points.length >= 2) {
         const [a, b] = points as [{ x: number; y: number }, { x: number; y: number }];
         start.current = {
           ...start.current,
           distance: Math.hypot(a.x - b.x, a.y - b.y),
           scale: current.scale,
+          multi: true,
         };
       } else {
         start.current = {
@@ -180,6 +195,7 @@ export function useZoomPan(options: Options) {
           scale: current.scale,
           offsetX: current.x,
           offsetY: current.y,
+          multi: false,
         };
         if (current.scale > 1) setPanning(true);
       }
@@ -223,9 +239,29 @@ export function useZoomPan(options: Options) {
       setAnimate(true);
       if (!had) return;
 
+      // One finger left after a pinch carries on as a pan from where it is
+      // now. Without re-basing, the pan resumed from where the *first* finger
+      // went down and the image jumped under the remaining one.
+      const [remaining] = [...pointers.current.values()];
+      if (pointers.current.size === 1 && remaining) {
+        const current = latest.current;
+        start.current = {
+          ...start.current,
+          x: remaining.x,
+          y: remaining.y,
+          distance: 0,
+          scale: current.scale,
+          offsetX: current.x,
+          offsetY: current.y,
+        };
+        if (current.scale > 1) setPanning(true);
+        setAnimate(false);
+        return;
+      }
+
       // A horizontal flick only changes image while the picture is unzoomed;
       // once zoomed, the same gesture is how you look around it.
-      if (pointers.current.size === 0 && latest.current.scale === 1 && options.onSwipe) {
+      if (pointers.current.size === 0 && !start.current.multi && latest.current.scale === 1 && options.onSwipe) {
         const dx = event.clientX - start.current.x;
         const dy = event.clientY - start.current.y;
         const elapsed = Date.now() - start.current.time;

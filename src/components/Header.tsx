@@ -90,7 +90,10 @@ export function Header({
             title: action.label,
           } as const;
 
-          if (action.href) {
+          // A disabled link is a disabled button. An anchor has no disabled
+          // state — `disabled` on one is ignored, so it stayed followable and
+          // kept calling onClick.
+          if (action.href && !action.disabled) {
             return (
               <a
                 key={action.id}

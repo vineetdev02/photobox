@@ -35,11 +35,15 @@ import { useZoomPan } from "./hooks/useZoomPan.js";
 import type { FeedbackValue, ImageViewerProps, ViewerContext, ViewerImage } from "./types.js";
 import {
   absoluteUrl,
+  ALL_GROUPS,
+  clampIndex,
   countInGroup,
   deriveGroups,
   downloadFile,
   formatTemplate,
+  type GroupChoice,
   isTypingTarget,
+  resolveGroup,
   shareUrl,
 } from "./utils.js";
 
@@ -112,31 +116,44 @@ export function ImageViewer(props: ImageViewerProps) {
   const groupNames = useMemo(() => deriveGroups(images), [images]);
   const showGroups = groupsEnabled && groupNames.length > 1;
 
-  const [selectedGroup, setSelectedGroup] = useState<string | undefined>(() => {
-    if (!groupsEnabled || groupNames.length < 2) return undefined;
-    if (defaultGroup && groupNames.includes(defaultGroup)) return defaultGroup;
-    return allGroupsTab ? undefined : groupNames[0];
-  });
+  const [groupChoice, setGroupChoice] = useState<GroupChoice>(null);
+
+  // An image asked for by its place in `images` — a grid tile's position.
+  const absoluteMode = props.absoluteIndex !== undefined && images.length > 0;
+  const requestedSlot = absoluteMode ? clampIndex(props.absoluteIndex as number, images.length) : -1;
+  const requested = absoluteMode ? images[requestedSlot] : undefined;
 
   /**
-   * The selection, repaired against the images actually in hand.
+   * The group on screen, resolved against the images actually in hand.
    *
    * `images` is an ordinary prop, so it can be replaced while the viewer is
    * open — a second property, a filtered gallery, a set that finished loading.
-   * A selection left pointing at a group the new array does not contain
-   * filters every image away, and an empty set renders as no overlay at all:
-   * the viewer does not go blank, it disappears. Falling back here rather than
-   * in an effect means there is never a frame without an image in it.
+   * A choice left pointing at a group the new array does not contain would
+   * filter every image away, and an empty set renders as no overlay at all:
+   * the viewer would not go blank, it would disappear. Resolving here rather
+   * than in an effect means there is never a frame without an image in it.
    */
-  const activeGroup = useMemo(() => {
-    if (selectedGroup === undefined || groupNames.includes(selectedGroup)) return selectedGroup;
-    return allGroupsTab || groupNames.length < 2 ? undefined : groupNames[0];
-  }, [selectedGroup, groupNames, allGroupsTab]);
+  const activeGroup = resolveGroup({
+    groups: groupNames,
+    enabled: groupsEnabled,
+    allTab: allGroupsTab,
+    choice: groupChoice,
+    defaultGroup,
+    requested,
+  });
 
-  const visible = useMemo(
-    () => (activeGroup === undefined ? images : images.filter((image) => image.group === activeGroup)),
-    [images, activeGroup],
-  );
+  // Positions in `images` of the images on screen, so every context handed
+  // out names the entry it came from — `indexOf` cannot, once the same image
+  // object appears twice.
+  const slots = useMemo(() => {
+    const result: number[] = [];
+    images.forEach((image, slot) => {
+      if (activeGroup === undefined || image.group === activeGroup) result.push(slot);
+    });
+    return result;
+  }, [images, activeGroup]);
+
+  const visible = useMemo(() => slots.map((slot) => images[slot] as ViewerImage), [slots, images]);
 
   const counts = useMemo(() => {
     const result: Record<string, number> = {};
@@ -147,22 +164,27 @@ export function ImageViewer(props: ImageViewerProps) {
   /* ---------- index ---------- */
 
   const [internalIndex, setInternalIndex] = useState(props.defaultIndex ?? 0);
-  const isControlled = props.index !== undefined;
-  const rawIndex = isControlled ? (props.index as number) : internalIndex;
-  const index = visible.length === 0 ? 0 : Math.min(Math.max(rawIndex, 0), visible.length - 1);
+  const isControlled = absoluteMode || props.index !== undefined;
+  const rawIndex = absoluteMode
+    ? Math.max(0, slots.indexOf(requestedSlot))
+    : props.index !== undefined
+      ? props.index
+      : internalIndex;
+  const index = clampIndex(rawIndex, visible.length);
 
   const current: ViewerImage | undefined = visible[index];
 
-  const context: ViewerContext | null = useMemo(() => {
-    if (!current) return null;
-    return {
-      image: current,
-      index,
-      total: visible.length,
-      absoluteIndex: images.indexOf(current),
-      group: current.group,
-    };
-  }, [current, index, visible.length, images]);
+  const contextAt = useCallback(
+    (position: number): ViewerContext | null => {
+      const image = visible[position];
+      const slot = slots[position];
+      if (!image || slot === undefined) return null;
+      return { image, index: position, total: visible.length, absoluteIndex: slot, group: image.group };
+    },
+    [visible, slots],
+  );
+
+  const context = useMemo(() => contextAt(index), [contextAt, index]);
 
   const contextRef = useRef(context);
   contextRef.current = context;
@@ -178,21 +200,18 @@ export function ImageViewer(props: ImageViewerProps) {
       if (visible.length === 0) return;
       const wrapped = loop
         ? ((next % visible.length) + visible.length) % visible.length
-        : Math.min(Math.max(next, 0), visible.length - 1);
+        : clampIndex(next, visible.length);
+
+      // ArrowRight on the last image with `loop` off goes nowhere, and a
+      // callback saying it went somewhere is an analytics event for a photo
+      // nobody moved to.
+      if (wrapped === index) return;
 
       if (!isControlled) setInternalIndex(wrapped);
-      const image = visible[wrapped];
-      if (image) {
-        onIndexChangeRef.current?.(wrapped, {
-          image,
-          index: wrapped,
-          total: visible.length,
-          absoluteIndex: images.indexOf(image),
-          group: image.group,
-        });
-      }
+      const target = contextAt(wrapped);
+      if (target) onIndexChangeRef.current?.(wrapped, target);
     },
-    [visible, loop, isControlled, images],
+    [visible.length, loop, index, isControlled, contextAt],
   );
 
   const next = useCallback(() => goTo(index + 1), [goTo, index]);
@@ -200,7 +219,7 @@ export function ImageViewer(props: ImageViewerProps) {
 
   const selectGroup = useCallback(
     (group: string | undefined) => {
-      setSelectedGroup(group);
+      setGroupChoice(group === undefined ? ALL_GROUPS : group);
       onGroupChange?.(group);
 
       // A new set means the old position is meaningless — image 6 of Indoors
@@ -212,14 +231,14 @@ export function ImageViewer(props: ImageViewerProps) {
         return;
       }
 
-      const nextSet = group === undefined ? images : images.filter((image) => image.group === group);
-      const first = nextSet[0];
+      const slot = images.findIndex((image) => group === undefined || image.group === group);
+      const first = images[slot];
       if (!first) return;
       onIndexChangeRef.current?.(0, {
         image: first,
         index: 0,
-        total: nextSet.length,
-        absoluteIndex: images.indexOf(first),
+        total: group === undefined ? images.length : countInGroup(images, group),
+        absoluteIndex: slot,
         group: first.group,
       });
     },
@@ -232,6 +251,11 @@ export function ImageViewer(props: ImageViewerProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLElement>(null);
 
+  // Which entry of `images` is on screen. The src alone is not enough: the same
+  // photo can sit in a gallery twice, and moving between the two copies is
+  // still a new image to zoom, load and ask about.
+  const imageKey = context && current ? `${context.absoluteIndex}:${current.src}` : "";
+
   const transform = useZoomPan({
     stageRef,
     imageRef,
@@ -242,7 +266,7 @@ export function ImageViewer(props: ImageViewerProps) {
     zoomStep,
     wheelZoom,
     doubleClickZoom,
-    resetKey: current?.src,
+    resetKey: imageKey,
     onSwipe: (direction) => goTo(index + direction),
     onZoomChange: (scale) => {
       if (contextRef.current) onZoomChange?.(scale, contextRef.current);
@@ -254,11 +278,15 @@ export function ImageViewer(props: ImageViewerProps) {
 
   /* ---------- loading state ---------- */
 
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  // The outcome is stored against the image it belongs to, and anything that
+  // does not match reads as loading. It used to be reset to "loading" in an
+  // effect after the next image rendered — and a preloaded image can fire
+  // `load` before a passive effect runs, which left it hidden behind a spinner
+  // for good.
   const [retryToken, setRetryToken] = useState(0);
-  useEffect(() => {
-    setStatus("loading");
-  }, [current?.src, retryToken]);
+  const loadKey = `${imageKey}:${retryToken}`;
+  const [loaded, setLoaded] = useState<{ key: string; status: "ready" | "error" } | null>(null);
+  const status = loaded !== null && loaded.key === loadKey ? loaded.status : "loading";
 
   /* ---------- toast ---------- */
 
@@ -283,14 +311,23 @@ export function ImageViewer(props: ImageViewerProps) {
   // `index` stays a dependency on purpose. It is the one restart that is
   // wanted: stepping through with the arrows gives you the full interval to
   // look at the image you just chose.
+  //
+  // With `loop` off the last image is the end of the show, so it stops there
+  // rather than ticking against the end of the set forever.
   const advanceRef = useRef(next);
-  advanceRef.current = next;
+  advanceRef.current = () => {
+    if (!loop && index >= visible.length - 1) setPlaying(false);
+    else next();
+  };
+
+  /** Whether there is actually an overlay in the document to act on. */
+  const showing = open && mounted && context !== null;
 
   useEffect(() => {
-    if (!playing || !open || visible.length < 2) return;
+    if (!playing || !showing || visible.length < 2) return;
     const timer = window.setInterval(() => advanceRef.current(), slideshowInterval);
     return () => window.clearInterval(timer);
-  }, [playing, open, visible.length, index, slideshowInterval]);
+  }, [playing, showing, visible.length, index, slideshowInterval]);
 
   // Zooming in is a deliberate look at one photo; advancing out from under the
   // user at that moment is the wrong call, so the slideshow yields.
@@ -300,27 +337,34 @@ export function ImageViewer(props: ImageViewerProps) {
 
   /* ---------- side effects ---------- */
 
-  /** Whether there is actually an overlay in the document to act on. */
-  const showing = open && mounted && images.length > 0 && Boolean(current) && Boolean(context);
-
+  // Every side effect keys on `showing`, never on `open` alone. `open`
+  // defaults to true, so a gallery whose images are still loading is open with
+  // nothing on screen — and it used to lock the page's scroll and eat its arrow
+  // keys all the same.
   useStyles(injectStyles);
-  useScrollLock(scrollLock && open);
-  // `showing`, not `open`: the mount guard below makes the first render return
-  // null, so on the pass where the trap's effect first runs there is no node
-  // for rootRef to point at — and its deps do not change when the portal
-  // arrives, so it would never run again. The overlay would then never take
-  // focus, and a keyboard user would still be on the page behind it.
+  useScrollLock(scrollLock && showing);
+  // `showing` also carries the mount guard: the first render returns null, so
+  // on the pass where the trap's effect first runs there is no node for
+  // rootRef to point at — and its deps do not change when the portal arrives,
+  // so it would never run again. The overlay would then never take focus, and
+  // a keyboard user would still be on the page behind it.
   useFocusTrap(rootRef, showing);
-  usePreload(visible, index, open ? preload : 0);
+  usePreload(visible, index, showing ? preload : 0);
 
+  // Once per opening, and only when there is something to report: an `onOpen`
+  // keyed on `open` alone fired before the images arrived, found no context,
+  // and was never tried again.
   const openedRef = useRef(false);
   useEffect(() => {
-    if (open && !openedRef.current && contextRef.current) {
+    if (!open) {
+      openedRef.current = false;
+      return;
+    }
+    if (showing && !openedRef.current && contextRef.current) {
       openedRef.current = true;
       onOpen?.(contextRef.current);
     }
-    if (!open) openedRef.current = false;
-  }, [open, onOpen]);
+  }, [open, showing, onOpen]);
 
   const handleShare = useCallback(async () => {
     if (!contextRef.current) return;
@@ -343,7 +387,7 @@ export function ImageViewer(props: ImageViewerProps) {
   }, [onDownload]);
 
   useEffect(() => {
-    if (!keyboard || !open || typeof window === "undefined") return;
+    if (!keyboard || !showing || typeof window === "undefined") return;
 
     function onKeyDown(event: KeyboardEvent) {
       // The listener is on `window`, so a keystroke aimed at a field inside
@@ -369,7 +413,7 @@ export function ImageViewer(props: ImageViewerProps) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
-    keyboard, open, next, previous, closeOnEscape, onClose, isFullscreen,
+    keyboard, showing, next, previous, closeOnEscape, onClose, isFullscreen,
     zoom, rotate, fullscreen, fullscreenSupported, toggleFullscreen, transform,
   ]);
 
@@ -486,7 +530,7 @@ export function ImageViewer(props: ImageViewerProps) {
           <Feedback
             question={feedbackQuestion ?? labels.feedbackQuestion}
             labels={labels}
-            resetKey={current.src}
+            resetKey={imageKey}
             onAnswer={(value: FeedbackValue) => contextRef.current && onFeedback?.(value, contextRef.current)}
           />
         ) : null}
@@ -499,7 +543,10 @@ export function ImageViewer(props: ImageViewerProps) {
           data-toolbar={tools ? "true" : "false"}
           {...transform.handlers}
         >
-          {status === "loading" ? <div className="riv-spinner" aria-hidden /> : null}
+          {/* A custom renderer loads on its own terms and tells the viewer
+              nothing, so there is no load to wait for: a spinner there would
+              spin over the finished image forever. */}
+          {status === "loading" && !renderImage ? <div className="riv-spinner" aria-hidden /> : null}
 
           {status === "error" ? (
             <div className="riv-error">
@@ -516,7 +563,7 @@ export function ImageViewer(props: ImageViewerProps) {
               ) : (
                 <img
                   ref={imageRef as React.RefObject<HTMLImageElement>}
-                  key={`${current.src}-${retryToken}`}
+                  key={loadKey}
                   className="riv-img"
                   src={current.src}
                   alt={current.alt ?? current.title ?? ""}
@@ -526,8 +573,8 @@ export function ImageViewer(props: ImageViewerProps) {
                   data-animate={transform.animate}
                   draggable={false}
                   decoding="async"
-                  onLoad={() => setStatus("ready")}
-                  onError={() => setStatus("error")}
+                  onLoad={() => setLoaded({ key: loadKey, status: "ready" })}
+                  onError={() => setLoaded({ key: loadKey, status: "error" })}
                 />
               )}
             </div>
@@ -576,7 +623,7 @@ export function ImageViewer(props: ImageViewerProps) {
                     image,
                     index: position,
                     total: visible.length,
-                    absoluteIndex: images.indexOf(image),
+                    absoluteIndex: slots[position] ?? -1,
                     group: image.group,
                     active,
                   })

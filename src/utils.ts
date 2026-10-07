@@ -13,6 +13,59 @@ export function countInGroup(images: ViewerImage[], group: string): number {
   return images.reduce((total, image) => (image.group === group ? total + 1 : total), 0);
 }
 
+/** The All tab, as a choice someone made — distinct from no choice at all. */
+export const ALL_GROUPS: unique symbol = Symbol("photobox.all-groups");
+
+/** A tab name, the All tab, or `null` while nothing has been chosen yet. */
+export type GroupChoice = string | typeof ALL_GROUPS | null;
+
+/**
+ * The group on screen, worked out on every render from what was chosen and
+ * what is in hand, rather than decided once and stored.
+ *
+ * `null` is not the All tab. A gallery that mounts with no images and receives
+ * them later has chosen nothing, and must still land on `defaultGroup` or the
+ * first tab — not on every image under a tab bar with no tab selected.
+ *
+ * `requested` is an image the consumer asked for by its position in `images`.
+ * When the group on screen does not contain it the viewer moves to the group
+ * that does: a grid tile has to open on that tile, whatever tab the reader
+ * last left the viewer on.
+ */
+export function resolveGroup(input: {
+  groups: readonly string[];
+  enabled: boolean;
+  allTab: boolean;
+  choice: GroupChoice;
+  defaultGroup?: string | undefined;
+  requested?: ViewerImage | undefined;
+}): string | undefined {
+  const { groups, enabled, allTab, choice, defaultGroup, requested } = input;
+
+  // One group or none means no tab bar, and no tab bar has to mean no filter:
+  // otherwise the images outside that one group are unreachable.
+  if (!enabled || groups.length < 2) return undefined;
+
+  let group: string | undefined;
+  if (typeof choice === "string" && groups.includes(choice)) group = choice;
+  else if (choice === ALL_GROUPS && allTab) group = undefined;
+  else if (defaultGroup !== undefined && groups.includes(defaultGroup)) group = defaultGroup;
+  else group = allTab ? undefined : groups[0];
+
+  if (requested && group !== undefined && requested.group !== group) {
+    // An image with no group belongs to no tab, so only the unfiltered set can
+    // show it.
+    return requested.group !== undefined && groups.includes(requested.group) ? requested.group : undefined;
+  }
+  return group;
+}
+
+/** A position that is always inside `[0, length)`, whatever was passed in. */
+export function clampIndex(value: number, length: number): number {
+  if (length <= 0 || !Number.isFinite(value)) return 0;
+  return Math.min(Math.max(Math.trunc(value), 0), length - 1);
+}
+
 /**
  * Fills `{placeholders}` and then removes the punctuation left stranded by an
  * empty one. A gallery with no groups and no titles must not print

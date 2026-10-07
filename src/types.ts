@@ -93,9 +93,20 @@ export interface ImageViewerProps {
   open?: boolean;
   onClose?: () => void;
 
-  /** Controlled index, into the *currently visible* set. */
+  /**
+   * Controlled index, into the *currently visible* set — image 2 of the tab on
+   * screen. To open on a particular entry of `images`, use `absoluteIndex`.
+   */
   index?: number;
   defaultIndex?: number;
+  /**
+   * Controlled position in `images` itself, whatever group is on screen — what
+   * a grid tile knows about the photo it shows. When the tab on screen does not
+   * contain that image, the viewer switches to the tab that does. Takes
+   * precedence over `index`; read the new position back from
+   * `context.absoluteIndex` in `onIndexChange`.
+   */
+  absoluteIndex?: number;
   onIndexChange?: (index: number, context: ViewerContext) => void;
 
   /* ---- chrome: each one is a switch ---- */
@@ -176,5 +187,6 @@ export interface ImageViewerProps {
   onDownload?: (context: ViewerContext) => void;
   onOpen?: (context: ViewerContext) => void;
   onZoomChange?: (scale: number, context: ViewerContext) => void;
+  /** Called when the reader picks a tab; `undefined` is the All tab. */
   onGroupChange?: (group: string | undefined) => void;
 }

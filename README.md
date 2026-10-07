@@ -36,8 +36,12 @@ export function Gallery() {
 }
 ```
 
+`openAt(i)` takes the photo's position in `images` — what a grid tile knows — so a tile opens on
+its own photo even with groups on: the viewer switches to that photo's tab.
+
 `useImageViewer` is a convenience, not a requirement. `ImageViewer` is controlled by plain props,
-so `open`, `index`, `onClose` and `onIndexChange` work with whatever state you already have.
+so `open`, `absoluteIndex` (or `index`), `onClose` and `onIndexChange` work with whatever state you
+already have.
 
 Styles are injected on first mount, so there is no CSS import to forget. If you would rather own
 them, `import "photobox/styles.css"` and pass `injectStyles={false}`.
@@ -114,6 +118,16 @@ filtering every image away.
 <ImageViewer images={images} groups allGroupsTab defaultGroup="Indoors" />
 ```
 
+Two ways to say which photo is open, because they answer different questions:
+
+| prop | counts within | use it when |
+| --- | --- | --- |
+| `absoluteIndex` | `images` | you know the photo — a grid tile, a deep link. The viewer moves to its tab. |
+| `index` | the tab on screen | you are driving the viewer's own position, e.g. "image 2 of Indoors" |
+
+`onIndexChange(index, context)` reports both: `index` within the tab, `context.absoluteIndex`
+within `images`. `onGroupChange` fires when the reader picks a tab.
+
 ## Gestures and keyboard
 
 | input | action |
@@ -135,7 +149,7 @@ focus, so a field in `headerExtra` or `footerExtra` gets its own keystrokes — 
 
 ## Props
 
-**Content** — `images`, `open`, `onClose`, `index`, `defaultIndex`, `onIndexChange`
+**Content** — `images`, `open`, `onClose`, `absoluteIndex`, `index`, `defaultIndex`, `onIndexChange`
 
 **Chrome** — `groups`, `defaultGroup`, `allGroupsTab`, `thumbnails`, `thumbnailsCollapsible`,
 `defaultThumbnailsOpen`, `caption`, `counter`, `arrows`, `closeButton`, `toolbar`

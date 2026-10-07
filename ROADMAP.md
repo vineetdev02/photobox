@@ -2,8 +2,9 @@
 
 Nothing here is built. It is the queue, so we can take it one step at a time.
 
-Current state: everything in the README works and is verified in a real browser.
-31 tests pass.
+Current state: everything in the README works. The unit suite runs in jsdom, and
+`verify/` renders the packed tarball from `node_modules` — the grid, the wheel and the
+keyboard included — on React 18 and 19.
 
 ---
 
